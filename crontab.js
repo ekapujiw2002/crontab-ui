@@ -1,8 +1,12 @@
+/*jshint esversion: 6*/
 //load database
 var Datastore = require('nedb');
 var db = new Datastore({ filename: __dirname + '/crontabs/crontab.db' });
+
 db.loadDatabase(function (err) {
+	if (err) throw err; // no hope, just terminate
 });
+
 var exec = require('child_process').exec;
 var fs = require('fs');
 var cron_parser = require("cron-parser");
@@ -16,7 +20,7 @@ crontab = function(name, command, schedule, stopped, logging){
 	data.name = name;
 	data.command = command;
 	data.schedule = schedule;
-	if(stopped != null) {
+	if(stopped !== null) {
 		data.stopped = stopped;
 	}
 	data.timestamp = (new Date()).toString();
@@ -52,32 +56,39 @@ exports.crontabs = function(callback){
 		callback(docs);
 	});
 };
-exports.set_crontab = function(env_vars){
+exports.set_crontab = function(env_vars, callback){
 	exports.crontabs( function(tabs){
 		var crontab_string = "";
 		if (env_vars) {
 			crontab_string = env_vars + "\n";
 		}
 		tabs.forEach(function(tab){
-			if(!tab.stopped){
-				if (tab.logging && tab.logging == "true"){
+			if(!tab.stopped) {
+				if (tab.logging && tab.logging == "true") {
 					tmp_log = "/tmp/" + tab._id + ".log";
 					log_file = exports.log_folder + "/" + tab._id + ".log";
 					if(tab.command[tab.command.length-1] != ";") // add semicolon
 						tab.command +=";";
-					//{ command; } 2>/tmp/<id>.log|| {if test -f /tmp/<id>; then date >> <log file>; cat /tmp/<id>.log >> <log file>; rm /tmp<id>.log }
 					crontab_string += tab.schedule + " { " + tab.command + " } 2> " + tmp_log +"; if test -f " + tmp_log +"; then date >> " + log_file + "; cat " + tmp_log + " >> " + log_file + "; rm " + tmp_log + "; fi \n";
-					}
-				else
+				}
+				else {
 					crontab_string += tab.schedule + " " + tab.command + "\n";
+				}
 			}
 		});
 
-		fs.writeFile(exports.env_file, env_vars);
-		fs.writeFile("/tmp/crontab", crontab_string, function(err) {
-			exec("crontab /tmp/crontab");
-		});
+		fs.writeFile(exports.env_file, env_vars, function(err) {
+			if (err) callback(err);
 
+			fs.writeFile("/tmp/crontab", crontab_string, function(err) {
+				if (err) return callback(err);
+
+				exec("crontab /tmp/crontab", function(err) {
+					if (err) return callback(err);
+					else callback();
+				});
+			});
+		});
 	});
 };
 
@@ -118,7 +129,7 @@ exports.restore = function(db_name){
 	db.loadDatabase(); // reload the database
 };
 
-exports.reload_db= function(){
+exports.reload_db = function(){
 	db.loadDatabase();
 };
 
@@ -158,4 +169,9 @@ exports.import_crontab = function(){
 			}
 		});
 	});
+};
+
+exports.autosave_crontab = function(callback) {
+	let env_vars = exports.get_env();
+	exports.set_crontab(env_vars, callback);
 };
